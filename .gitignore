@@ -44,3 +44,4 @@ outputs/*
 # Logs
 *.log
 .claude
+data/bak/

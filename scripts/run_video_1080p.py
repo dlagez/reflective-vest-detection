@@ -24,6 +24,13 @@ def parse_classes(value: str | None) -> list[int] | None:
     return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def default_run_name(video: str) -> str:
+    stem = Path(video).stem
+    if stem.endswith("_cleaned"):
+        stem = stem[: -len("_cleaned")]
+    return f"{stem}_detect"
+
+
 class FFmpegNVENCWriter:
     def __init__(self, output_path: Path, fps: float, width: int, height: int, cq: int) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +110,7 @@ def run(
     model = YOLO(weights)
     project = str(Path(output).resolve())
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_run_name = name or f"{Path(video).stem}_detect"
+    base_run_name = name or default_run_name(video)
     run_name = f"{base_run_name}_{timestamp}"
     run_dir = Path(project) / run_name
     output_video = run_dir / f"{Path(video).stem}.mp4"
@@ -221,7 +228,7 @@ def main() -> None:
     parser.add_argument("--video", default="data/videos/cv-xiaomi-1080.mp4", help="input video path")
     parser.add_argument("--weights", default="weights/yolo11m_safety.pt", help="YOLO weights path")
     parser.add_argument("--output", default="outputs/videos", help="output directory")
-    parser.add_argument("--name", default=None, help="YOLO output run name")
+    parser.add_argument("--name", default=None, help="output run name; default: <video>_detect")
     parser.add_argument("--conf", type=float, default=0.5, help="confidence threshold")
     parser.add_argument("--iou", type=float, default=0.45, help="NMS IoU threshold")
     parser.add_argument("--device", default=None, help="device passed to YOLO, for example 0 or cpu")

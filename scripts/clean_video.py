@@ -1,138 +1,193 @@
-"""清理视频中的损坏帧/空帧.
+"""Clean broken video streams before YOLO detection.
 
-读取原始视频，丢弃无法解码的帧和全黑/纯色帧，输出干净视频。
-不依赖 YOLO，纯 OpenCV 操作。
+This script uses FFmpeg to decode the source video, drop corrupt packets/frames,
+rebuild timestamps, remove audio, and write a normal H.264 MP4. It is intended
+for camera files that print errors such as:
 
-用法:
-    # 单个文件
-    python scripts/clean_video.py --source data/videos/broken.mp4
+    non-existing PPS 0 referenced
+    non monotonically increasing dts
 
-    # 整个文件夹
-    python scripts/clean_video.py --source data/videos/
-
-    # 调整亮度阈值
-    python scripts/clean_video.py --source data/videos/ --brightness 5.0
-
-    # 保留中间文件（默认会保存在原文件同级 _cleaned 后缀）
-    python scripts/clean_video.py --source data/videos/broken.mp4
+Examples:
+    .venv/bin/python scripts/clean_video.py --source data/videos/cv-hk-camera-拼色.mp4
+    .venv/bin/python scripts/clean_video.py --source data/videos
 """
 
-import cv2
 import argparse
+import json
+import subprocess
+from fractions import Fraction
 from pathlib import Path
 
-from src.utils.logger import logger
+
+VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".mpeg", ".mpg", ".ts"}
 
 
-def clean_video(input_path: str, output_path: str = None,
-                brightness_threshold: float = 1.0) -> dict:
-    """
-    Read a video, drop broken/blank frames, write a clean copy.
+def run_cmd(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check)
 
-    A frame is dropped if:
-      - OpenCV cannot decode it
-      - Mean brightness < threshold (all black)
-      - Pixel std < 1.0 (pure solid color, no detail)
 
-    Args:
-        input_path: Path to the broken video.
-        output_path: Path for the cleaned video.
-                     Defaults to <original>_cleaned.mp4 next to the original.
-        brightness_threshold: Minimum mean brightness (0-255) to keep a frame.
+def ffprobe(path: Path) -> dict:
+    cmd = [
+        "ffprobe",
+        "-hide_banner",
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        str(path),
+    ]
+    result = run_cmd(cmd)
+    return json.loads(result.stdout)
 
-    Returns:
-        Dict with keys: total, kept, dropped.
-    """
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {input_path}")
 
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+def parse_fps(value: str | None) -> float:
+    if not value or value == "0/0":
+        return 0.0
+    try:
+        return float(Fraction(value))
+    except (ValueError, ZeroDivisionError):
+        return 0.0
 
-    if output_path is None:
-        p = Path(input_path)
-        output_path = str(p.parent / f"{p.stem}_cleaned{p.suffix}")
 
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+def video_info(path: Path) -> dict:
+    data = ffprobe(path)
+    video_stream = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), None)
+    if video_stream is None:
+        raise RuntimeError(f"No video stream found: {path}")
 
-    total = 0
-    kept = 0
-    dropped = 0
+    fps = parse_fps(video_stream.get("avg_frame_rate"))
+    if fps <= 0:
+        fps = parse_fps(video_stream.get("r_frame_rate"))
+    if fps <= 0:
+        fps = 25.0
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            # Retry once — sometimes decode glitch recovers
-            ret, frame = cap.read()
-            if not ret:
-                break
-            total += 1
-            dropped += 1
-            continue
+    return {
+        "width": int(video_stream.get("width") or 0),
+        "height": int(video_stream.get("height") or 0),
+        "fps": fps,
+        "duration": float(data.get("format", {}).get("duration") or 0),
+        "format": data.get("format", {}).get("format_name"),
+        "video_codec": video_stream.get("codec_name"),
+    }
 
-        total += 1
 
-        # Skip blank / solid-color frames
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        mean_brightness = gray.mean()
-        std = gray.std()
+def output_path_for(source: Path, output: Path | None, source_is_dir: bool) -> Path:
+    if output is None:
+        return source.parent / f"{source.stem}_cleaned.mp4"
+    if source_is_dir:
+        return output / f"{source.stem}_cleaned.mp4"
+    if output.suffix:
+        return output
+    return output / f"{source.stem}_cleaned.mp4"
 
-        if mean_brightness < brightness_threshold or std < 1.0:
-            dropped += 1
-            logger.debug(
-                f"Frame {total} dropped "
-                f"(brightness={mean_brightness:.1f}, std={std:.1f})"
-            )
-            continue
 
-        out.write(frame)
-        kept += 1
+def build_ffmpeg_cmd(source: Path, target: Path, fps: float, encoder: str, cq: int, crf: int) -> list[str]:
+    if encoder == "nvenc":
+        codec_args = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", str(cq)]
+    else:
+        codec_args = ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf)]
 
-    cap.release()
-    out.release()
+    return [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-fflags",
+        "+genpts+discardcorrupt",
+        "-err_detect",
+        "ignore_err",
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0",
+        "-an",
+        "-vf",
+        f"fps={fps:.6f},setpts=N/FRAME_RATE/TB",
+        "-vsync",
+        "cfr",
+        *codec_args,
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(target),
+    ]
 
-    logger.info(
-        f"[{Path(input_path).name}] "
-        f"{kept}/{total} frames kept, {dropped} dropped "
-        f"({dropped / max(total, 1) * 100:.1f}%)"
+
+def clean_one(source: Path, output: Path | None, source_is_dir: bool, encoder: str, cq: int, crf: int) -> dict:
+    info = video_info(source)
+    target = output_path_for(source, output, source_is_dir)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 80)
+    print(f"Source:  {source}")
+    print(f"Output:  {target}")
+    print(f"Input:   {info['width']}x{info['height']} {info['fps']:.3f} FPS, codec={info['video_codec']}, format={info['format']}")
+    print(f"Encoder: {encoder}")
+    print("=" * 80, flush=True)
+
+    cmd = build_ffmpeg_cmd(source, target, info["fps"], encoder, cq, crf)
+    result = run_cmd(cmd, check=False)
+
+    if result.returncode != 0 and encoder == "nvenc":
+        print("NVENC failed, retrying with libx264...")
+        encoder = "libx264"
+        cmd = build_ffmpeg_cmd(source, target, info["fps"], encoder, cq, crf)
+        result = run_cmd(cmd, check=False)
+
+    if result.returncode != 0:
+        print(result.stderr)
+        raise RuntimeError(f"ffmpeg failed with code {result.returncode}")
+
+    cleaned_info = video_info(target)
+    report = {
+        "source": str(source),
+        "output": str(target),
+        "encoder": encoder,
+        "input": info,
+        "cleaned": cleaned_info,
+        "ffmpeg_command": cmd,
+    }
+    report_path = target.with_suffix(".clean_report.json")
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"Cleaned video saved to: {target}")
+    print(f"Report saved to:        {report_path}")
+    print(f"Cleaned: {cleaned_info['width']}x{cleaned_info['height']} {cleaned_info['fps']:.3f} FPS")
+    return report
+
+
+def find_videos(source: Path) -> list[Path]:
+    if source.is_file():
+        return [source]
+    if source.is_dir():
+        return sorted(p for p in source.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_EXTS)
+    raise FileNotFoundError(source)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Clean corrupt video frames/packets before YOLO detection.")
+    parser.add_argument("--source", required=True, help="video file or directory")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="output file or directory; default: each video is saved as <filename>_cleaned.mp4",
     )
-    logger.info(f"Cleaned video saved to: {output_path}")
-
-    return {"total": total, "kept": kept, "dropped": dropped}
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Clean broken frames from video(s)")
-    parser.add_argument("--source", required=True, help="Video file or directory")
-    parser.add_argument("--brightness", type=float, default=1.0,
-                        help="Min mean brightness (0-255) to keep frame")
+    parser.add_argument("--encoder", choices=["nvenc", "libx264"], default="nvenc", help="video encoder")
+    parser.add_argument("--cq", type=int, default=28, help="NVENC quality, lower is better")
+    parser.add_argument("--crf", type=int, default=23, help="libx264 quality, lower is better")
     args = parser.parse_args()
 
-    p = Path(args.source)
-    files = []
+    source = Path(args.source)
+    output = Path(args.output) if args.output else None
+    source_is_dir = source.is_dir()
+    files = find_videos(source)
+    if not files:
+        raise RuntimeError(f"No videos found: {source}")
 
-    if p.is_file():
-        files = [p]
-    elif p.is_dir():
-        for ext in ("*.mp4", "*.avi", "*.mov", "*.mkv", "*.webm"):
-            files.extend(p.glob(ext))
-        files.sort()
-    else:
-        logger.error(f"Path not found: {args.source}")
-        return
-
-    logger.info(f"Found {len(files)} video(s) to clean")
-
-    total_dropped = 0
-    for f in files:
-        result = clean_video(str(f), brightness_threshold=args.brightness)
-        total_dropped += result["dropped"]
-
-    logger.info(f"Done. Total {total_dropped} frames dropped across {len(files)} video(s)")
+    for file in files:
+        clean_one(file, output, source_is_dir, args.encoder, args.cq, args.crf)
 
 
 if __name__ == "__main__":
