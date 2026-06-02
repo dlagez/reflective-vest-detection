@@ -1,6 +1,7 @@
 """文件操作工具函数."""
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -46,7 +47,8 @@ def ensure_dir(path: str) -> str:
 
 
 def get_output_path(output_dir: str, filename: str, suffix: str = "") -> str:
-    """Generate an output path in the output directory."""
+    """Generate an output path in the output directory, with timestamp to avoid overwriting."""
     p = Path(filename)
-    out_name = f"{p.stem}{suffix}{p.suffix}"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"{p.stem}{suffix}_{ts}{p.suffix}"
     return str(Path(output_dir) / out_name)

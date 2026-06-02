@@ -20,6 +20,12 @@ def parse_args():
     )
     parser.add_argument("--source", type=str, default=None, help="Input source path")
     parser.add_argument("--config", type=str, default="configs/model.yaml", help="Model config path")
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        default=False,
+        help="Draw detection annotations on output video",
+    )
     return parser.parse_args()
 
 
@@ -31,7 +37,7 @@ def main():
         run_image(source=args.source, config=args.config)
     elif args.task == "video":
         from scripts.run_video import run as run_video
-        run_video(source=args.source, config=args.config)
+        run_video(source=args.source, config=args.config, visualize=args.visualize)
     elif args.task == "camera":
         from scripts.run_camera import run as run_camera
         run_camera(config=args.config)

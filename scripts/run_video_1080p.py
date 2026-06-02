@@ -22,6 +22,8 @@ from ultralytics import YOLO
 
 from src.utils.box_utils import align_to_stride
 
+# .venv/bin/python scripts/run_video_1080p.py --video data/videos/cv-hk-camera-拼色.mp4 --batch-size 32
+# .venv/bin/python scripts/run_video_1080p.py --video data/videos/cv-hk-camera-纯色.mp4 --batch-size 32
 
 # ── FFmpeg 硬件编码写入器 ─────────────────────────────────────────
 class FFmpegWriter:

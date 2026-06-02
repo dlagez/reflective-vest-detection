@@ -18,7 +18,7 @@ from src.utils.logger import logger
 load_dotenv()
 
 
-def run(source: str = None, config: str = "configs/model.yaml"):
+def run(source: str = None, config: str = "configs/model.yaml", visualize: bool = False):
     cfg = load_config(config)
     weights = os.getenv("MODEL_WEIGHTS", cfg["model"]["weights"])
 
@@ -32,7 +32,7 @@ def run(source: str = None, config: str = "configs/model.yaml"):
     iou = float(os.getenv("IOU_THRESHOLD", cfg["inference"]["iou"]))
     output_dir = os.getenv("OUTPUT_DIR", cfg["output"]["output_dir"])
 
-    detector = Detector(weights=weights, device=device,half=half)
+    detector = Detector(weights=weights, device=device, half=half)
     processor = VideoProcessor(detector)
 
     if source is None:
@@ -44,21 +44,33 @@ def run(source: str = None, config: str = "configs/model.yaml"):
 
     logger.info(f"Processing video: {source}")
 
+    # Always write output video (visualize only controls annotation overlay)
     output_path = get_output_path(f"{output_dir}/videos", source, suffix="_result")
 
-    def on_frame(frame, results):
-        for result in results:
-            detections = detector.get_detections(result)
-            draw_detections(frame, detections)
-        return frame
+    frame_cb = None
+    if visualize:
+        def frame_cb(frame, results):
+            for result in results:
+                detections = detector.get_detections(result)
+                draw_detections(frame, detections)
+            return frame
 
     all_results = processor.process(
         source=source,
         output_path=output_path,
         conf=conf,
         iou=iou,
-        frame_callback=on_frame,
+        frame_callback=frame_cb,
+        visualize=visualize,
         show_preview=False,
     )
 
-    logger.info(f"Video output saved to: {output_path}")
+    # Save JSON report (use same stem as output video for consistency)
+    json_path = str(Path(output_path).with_suffix(".json"))
+    save_json({"source": source, "frames": all_results}, json_path)
+    logger.info(f"JSON report saved to: {json_path}")
+
+    if visualize:
+        logger.info(f"Annotated video saved to: {output_path}")
+    else:
+        logger.info(f"Video saved (no overlay) to: {output_path}")

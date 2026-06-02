@@ -22,6 +22,7 @@ class VideoProcessor:
         iou: float = 0.45,
         frame_callback: Optional[Callable] = None,
         show_preview: bool = False,
+        visualize: bool = False,
         imgsz: Optional[Tuple[int, int]] = None,
     ) -> list:
         """
@@ -30,6 +31,8 @@ class VideoProcessor:
         Args:
             imgsz: (height, width) for YOLO input. Auto-aligned to stride=32.
                    If None, computed from the video's native resolution.
+            visualize: if True, draw annotations on output frames via frame_callback.
+                       Default False for headless/server usage.
 
         Returns list of per-frame detection results.
         """
@@ -42,9 +45,6 @@ class VideoProcessor:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # Compute YOLO input size: align to stride=32 so the model doesn't
-        # silently resize and spam warnings. This only affects the tensor fed
-        # to the network — output bboxes are mapped back to the original frame.
         if imgsz is None:
             imgsz = align_to_stride(height, width)
 
@@ -64,7 +64,7 @@ class VideoProcessor:
             all_results.append(results)
 
             viz_frame = frame.copy()
-            if frame_callback:
+            if visualize and frame_callback:
                 viz_frame = frame_callback(viz_frame, results)
 
             out.write(viz_frame)
