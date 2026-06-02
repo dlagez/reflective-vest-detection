@@ -2,9 +2,10 @@
 
 import cv2
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from src.core.detector import Detector
+from src.utils.box_utils import align_to_stride
 
 
 class VideoProcessor:
@@ -21,9 +22,14 @@ class VideoProcessor:
         iou: float = 0.45,
         frame_callback: Optional[Callable] = None,
         show_preview: bool = False,
+        imgsz: Optional[Tuple[int, int]] = None,
     ) -> list:
         """
         Process a video file frame-by-frame.
+
+        Args:
+            imgsz: (height, width) for YOLO input. Auto-aligned to stride=32.
+                   If None, computed from the video's native resolution.
 
         Returns list of per-frame detection results.
         """
@@ -35,6 +41,12 @@ class VideoProcessor:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Compute YOLO input size: align to stride=32 so the model doesn't
+        # silently resize and spam warnings. This only affects the tensor fed
+        # to the network — output bboxes are mapped back to the original frame.
+        if imgsz is None:
+            imgsz = align_to_stride(height, width)
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -48,7 +60,7 @@ class VideoProcessor:
             if not ret:
                 break
 
-            results = self.detector.predict(frame, conf=conf, iou=iou)
+            results = self.detector.predict(frame, conf=conf, iou=iou, imgsz=imgsz)
             all_results.append(results)
 
             viz_frame = frame.copy()

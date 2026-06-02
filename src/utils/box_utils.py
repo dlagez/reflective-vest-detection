@@ -44,6 +44,18 @@ def filter_by_class(detections: list, class_name: str) -> list:
     return [d for d in detections if d.get("class_name") == class_name]
 
 
+def align_to_stride(h: int, w: int, stride: int = 32) -> tuple:
+    """
+    Round h/w UP to the nearest multiple of stride for YOLO input.
+
+    YOLO's backbone FPN has stride=32, so both dimensions must be
+    divisible by 32 — otherwise YOLO silently resizes and warns.
+    """
+    new_h = ((h + stride - 1) // stride) * stride
+    new_w = ((w + stride - 1) // stride) * stride
+    return (new_h, new_w)
+
+
 def xyxy_to_xywh(bbox: List[float]) -> List[float]:
     """Convert [x1, y1, x2, y2] to [x, y, w, h]."""
     return [bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]]

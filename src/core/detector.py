@@ -1,6 +1,6 @@
 """核心检测器 — 封装模型推理逻辑."""
 
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -12,12 +12,22 @@ from src.utils.box_utils import filter_by_class, compute_iou
 class Detector:
     """YOLO-based reflective vest detector."""
 
-    def __init__(self, weights: str, device: str = "0", half: bool = False):
+    def __init__(
+        self,
+        weights: str,
+        device: str = "0",
+        half: bool = False,
+        imgsz: Optional[Union[Tuple[int, int], int]] = None,
+        verbose: bool = False,
+    ):
         self.model = YOLO(weights)
         self.device = device
         self.half = half and device != "cpu"
+        self.imgsz = imgsz
+        self.verbose = verbose
 
-    def predict(self, source, conf: float = 0.5, iou: float = 0.45, classes: Optional[List[int]] = None, **kwargs):
+    def predict(self, source, conf: float = 0.5, iou: float = 0.45,
+                classes: Optional[List[int]] = None, imgsz=None, **kwargs):
         """Run inference on source (image path / numpy array / video stream)."""
         results = self.model.predict(
             source=source,
@@ -26,7 +36,8 @@ class Detector:
             device=self.device,
             half=self.half,
             classes=classes,
-            verbose=False,
+            imgsz=imgsz if imgsz is not None else self.imgsz,
+            verbose=self.verbose,
             **kwargs,
         )
         return results

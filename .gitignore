@@ -43,3 +43,4 @@ outputs/*
 
 # Logs
 *.log
+.claude
