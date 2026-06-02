@@ -20,8 +20,6 @@ import torch
 from tqdm import tqdm
 from ultralytics import YOLO
 
-from src.utils.box_utils import align_to_stride
-
 # .venv/bin/python scripts/run_video_1080p.py --video data/videos/cv-hk-camera-拼色.mp4 --batch-size 32
 # .venv/bin/python scripts/run_video_1080p.py --video data/videos/cv-hk-camera-纯色.mp4 --batch-size 32
 
@@ -112,9 +110,13 @@ def run_detection(
     print(f"       Total frames: {total_frames}")
     print(f"       Duration: {total_frames / fps:.1f}s")
 
-    imgsz = align_to_stride(vid_height, vid_width)
+    # Use ORIGINAL video resolution for inference — YOLO automatically
+    # letterboxes to the nearest multiple of its stride and maps bbox
+    # coords back to the input frame's actual pixel coordinates.
+    # No manual stride alignment needed at inference time.
+    imgsz = (vid_height, vid_width)
     print(f"[3/5] Model input size: {imgsz[0]}x{imgsz[1]} "
-          f"(stride-aligned; video stays {vid_width}x{vid_height})")
+          f"(original resolution; bbox mapped to {vid_width}x{vid_height})")
 
     use_half = half and isinstance(device, int) and device >= 0
     print(f"       FP16:         {'enabled' if use_half else 'disabled (FP32)'}")
@@ -400,7 +402,7 @@ def run_detection(
     print(f"  Video:           {video_path}")
     print(f"  Device:          {device_label}")
     print(f"  Resolution:      {vid_width}x{vid_height}")
-    print(f"  Model input:     {imgsz[1]}x{imgsz[0]} (stride-aligned)")
+    print(f"  Model input:     {imgsz[1]}x{imgsz[0]} (original resolution)")
     print(f"  FP16:            {use_half}")
     print(f"  Batch size:      {batch_size}")
     print(f"  Encoder:         {encoder}")
