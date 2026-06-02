@@ -1,0 +1,11 @@
+source:
+  image: data/images/
+  video: data/videos/
+  camera: 0
+
+processing:
+  batch_size: 1
+  save_results: true
+  show_preview: false
+
+device: auto  # auto, cpu, cuda:0

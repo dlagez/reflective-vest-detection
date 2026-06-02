@@ -1,0 +1,23 @@
+classes:
+  - id: 0
+    name: person
+    category: person
+  - id: 1
+    name: vest
+    category: safety_equipment
+  - id: 2
+    name: helmet
+    category: safety_equipment
+
+# 反光衣检测关注的类别
+target_classes:
+  - person
+  - vest
+
+# 合规规则：person 必须同时检测到 vest
+compliance_rules:
+  - require:
+      parent: person
+      child: vest
+      overlap_threshold: 0.5
+    violation_label: "no_vest"
